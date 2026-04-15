@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeBron James Basketball Game</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(255, 215, 120, 0.45), transparent 35%),
+        linear-gradient(to bottom, #1a2f59, #4f2b63 48%, #8d4d2d 100%);
+      color: white;
+      text-align: center;
+    }
+
+    .page-links {
+      margin: 0 auto;
+      max-width: 880px;
+      padding: 14px 0 0;
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .page-links a {
+      color: #ffffff;
+      text-decoration: none;
+      background: rgba(255, 255, 255, 0.14);
+      padding: 10px 18px;
+      border-radius: 999px;
+      font-weight: 600;
+      transition: background 0.2s ease;
+    }
+
+    .page-links a:hover {
+      background: rgba(255, 255, 255, 0.26);
+    }
+
+    h1 {
+      margin: 15px 0 5px;
+    }
+
+    p {
+      margin-top: 0;
+    }
+
+    canvas {
+      background: #87ceeb;
+      border: 4px solid rgba(255, 255, 255, 0.85);
+      display: block;
+      margin: 20px auto;
+      border-radius: 14px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+    }
+  </style>
+</head>
+<body>
+  <div class="page-links">
+    <a href="index.html">Agency Home</a>
+    <a href="fromScratch.html">From Scratch</a>
+  </div>
+  <h1>LeBron James Shooting Game</h1>
+  <p>Use Left/Right to move, Up to jump, SPACE to shoot, and D to dunk.</p>
+  <canvas id="gameCanvas" width="800" height="500"></canvas>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let score = 0;
+    let keys = {};
+    let timeLeft = 45;
+    let gameOver = false;
+    let lastTimestamp = 0;
+    const highScoreKey = "lebronGameHighScore";
+    let highScore = loadHighScore();
+
+    const lebronImg = new Image();
+    let imageLoaded = false;
+
+    lebronImg.src = "https://upload.wikimedia.org/wikipedia/commons/2/25/LeBron_James_Lakers.jpg";
+
+    lebronImg.onload = function () {
+      imageLoaded = true;
+    };
+
+    lebronImg.onerror = function () {
+      imageLoaded = false;
+    };
+
+    const player = {
+      x: 100,
+      y: 360,
+      width: 70,
+      height: 90,
+      speed: 6,
+      jumpVelocity: 0,
+      isJumping: false
+    };
+
+    const hoop = {
+      x: 650,
+      y: 150,
+      width: 80,
+      height: 10
+    };
+
+    const defender = {
+      x: 560,
+      y: 340,
+      width: 45,
+      height: 100,
+      speed: 3.2,
+      ySpeed: 2.4,
+      minX: 430,
+      maxX: 760,
+      minY: 292,
+      maxY: 360,
+      direction: 1,
+      jumpOffset: 0,
+      jumpDirection: 1,
+      targetX: 560,
+      targetY: 340,
+      patrolPhase: 0,
+      patrolAmplitude: 72,
+      contestTimer: 0,
+      recoveryTimer: 0,
+      pressureRadius: 145
+    };
+
+    const balls = [];
+    let lastShotX = player.x;
+    let repeatShotCount = 0;
+
+    document.addEventListener("keydown", (e) => {
+      if (gameOver) {
+        return;
+      }
+
+      keys[e.key] = true;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        shootBall();
+      }
+
+      if ((e.key === "ArrowUp" || e.key === "w") && !player.isJumping) {
+        player.jumpVelocity = -14;
+        player.isJumping = true;
+      }
+
+      if (e.key === "d" || e.key === "D") {
+        dunk();
+      }
+    });
+
+    document.addEventListener("keyup", (e) => {
+      keys[e.key] = false;
+    });
+
+    function drawPlayer() {
+      ctx.save();
+      ctx.shadowColor = "rgba(0, 0, 0, 0.25)";
+      ctx.shadowBlur = 16;
+      ctx.shadowOffsetY = 8;
+
+      if (imageLoaded) {
+        ctx.drawImage(lebronImg, player.x, player.y, player.width, player.height);
+        ctx.fillStyle = "rgba(0, 0, 0, 0.18)";
+        ctx.fillRect(player.x, player.y, player.width, player.height);
+      } else {
+        const bodyGradient = ctx.createLinearGradient(player.x, player.y, player.x, player.y + player.height);
+        bodyGradient.addColorStop(0, "#7351b5");
+        bodyGradient.addColorStop(1, "#3e1b66");
+        ctx.fillStyle = bodyGradient;
+        ctx.fillRect(player.x + 12, player.y + 18, player.width - 24, player.height - 18);
+
+        ctx.fillStyle = "#8d5f3c";
+        ctx.beginPath();
+        ctx.arc(player.x + player.width / 2, player.y + 16, 12, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#2b1b0d";
+        ctx.fillRect(player.x + 18, player.y + 5, player.width - 36, 7);
+
+        ctx.fillStyle = "#fdb927";
+        ctx.font = "20px Arial";
+        ctx.fillText("23", player.x + 20, player.y + 50);
+      }
+
+      ctx.restore();
+      drawPlayerShadow(player.x + player.width / 2, player.y + player.height);
+    }
+
+    function drawHoop() {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.35)";
+      ctx.fillRect(hoop.x + 34, hoop.y - 74, 72, 50);
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.lineWidth = 4;
+      ctx.strokeRect(hoop.x + 36, hoop.y - 72, 68, 46);
+
+      const poleGradient = ctx.createLinearGradient(hoop.x + 56, hoop.y - 40, hoop.x + 66, hoop.y + 40);
+      poleGradient.addColorStop(0, "#f4f7fb");
+      poleGradient.addColorStop(1, "#95a3af");
+      ctx.fillStyle = poleGradient;
+      ctx.fillRect(hoop.x + 55, hoop.y - 40, 10, 72);
+
+      const rimGradient = ctx.createLinearGradient(hoop.x, hoop.y, hoop.x, hoop.y + hoop.height);
+      rimGradient.addColorStop(0, "#ff725c");
+      rimGradient.addColorStop(1, "#c21f1f");
+      ctx.fillStyle = rimGradient;
+      ctx.fillRect(hoop.x, hoop.y, hoop.width, hoop.height);
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
+      ctx.lineWidth = 2;
+      for (let i = 8; i < hoop.width; i += 12) {
+        ctx.beginPath();
+        ctx.moveTo(hoop.x + i, hoop.y + hoop.height);
+        ctx.lineTo(hoop.x + i - 5, hoop.y + 30);
+        ctx.stroke();
+      }
+
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(hoop.x + 8 + i * 22, hoop.y + 14 + i * 4);
+        ctx.lineTo(hoop.x + 20 + i * 18, hoop.y + 28 + i * 4);
+        ctx.stroke();
+      }
+    }
+
+    function drawDefender() {
+      const defenderTop = defender.y - defender.jumpOffset;
+      ctx.save();
+      ctx.shadowColor = "rgba(0, 0, 0, 0.22)";
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 7;
+
+      const jerseyGradient = ctx.createLinearGradient(defender.x, defenderTop, defender.x, defenderTop + defender.height);
+      jerseyGradient.addColorStop(0, "#4b79d6");
+      jerseyGradient.addColorStop(1, "#112f68");
+      ctx.fillStyle = jerseyGradient;
+      ctx.fillRect(defender.x + 8, defenderTop + 18, defender.width - 16, defender.height - 18);
+
+      ctx.fillStyle = "#7b5233";
+      ctx.beginPath();
+      ctx.arc(defender.x + defender.width / 2, defenderTop + 12, 11, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#dfe8ff";
+      ctx.fillRect(defender.x + 11, defenderTop + 24, defender.width - 22, 24);
+
+      ctx.fillStyle = "#fdb927";
+      ctx.font = "18px Arial";
+      ctx.fillText("D", defender.x + 14, defenderTop + 42);
+      ctx.restore();
+
+      drawPlayerShadow(defender.x + defender.width / 2, defenderTop + defender.height, 0.8);
+    }
+
+    function drawBall(ball) {
+      ctx.save();
+      ctx.shadowColor = "rgba(0, 0, 0, 0.2)";
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetY = 4;
+
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+      const ballGradient = ctx.createRadialGradient(
+        ball.x - 3,
+        ball.y - 4,
+        2,
+        ball.x,
+        ball.y,
+        ball.radius + 2
+      );
+      ballGradient.addColorStop(0, "#ffca80");
+      ballGradient.addColorStop(0.45, "#ea7f1b");
+      ballGradient.addColorStop(1, "#b55500");
+      ctx.fillStyle = ballGradient;
+      ctx.fill();
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius - 3, 0.4, Math.PI * 1.6);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(ball.x - ball.radius + 2, ball.y);
+      ctx.quadraticCurveTo(ball.x, ball.y - 3, ball.x + ball.radius - 2, ball.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawPlayerShadow(centerX, baselineY, scale = 1) {
+      ctx.save();
+      ctx.fillStyle = "rgba(0, 0, 0, 0.2)";
+      ctx.beginPath();
+      ctx.ellipse(centerX, Math.min(456, baselineY + 2), 28 * scale, 8 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function loadHighScore() {
+      try {
+        const saved = localStorage.getItem(highScoreKey);
+        const parsed = Number(saved);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      } catch (error) {
+        return 0;
+      }
+    }
+
+    function updateHighScore() {
+      if (score <= highScore) {
+        return;
+      }
+
+      highScore = score;
+
+      try {
+        localStorage.setItem(highScoreKey, String(highScore));
+      } catch (error) {
+        // Keep playing even if storage is unavailable.
+      }
+    }
+
+    function shootBall() {
+      const shotOriginX = player.x + player.width;
+      const shotOriginY = player.y + 30;
+      const defenderCenterX = defender.x + defender.width / 2;
+      const playerCenterX = player.x + player.width / 2;
+      const horizontalGap = Math.abs(defenderCenterX - playerCenterX);
+      const closeContest = horizontalGap < defender.pressureRadius;
+      const tightContest = horizontalGap < 70;
+      const defenderTop = defender.y - defender.jumpOffset;
+      const defenderInAirspace = defenderTop < shotOriginY + 25;
+      const sameSpot = Math.abs(player.x - lastShotX) < 35;
+
+      repeatShotCount = sameSpot ? repeatShotCount + 1 : 0;
+      lastShotX = player.x;
+
+      if (closeContest) {
+        defender.contestTimer = Math.max(defender.contestTimer, tightContest ? 20 : 14);
+      }
+
+      let vx = 8;
+      let vy = -16;
+      let gravity = 0.45;
+
+      if (closeContest) {
+        vx -= 0.35;
+        vy -= 0.5;
+      }
+
+      if (tightContest && defenderInAirspace) {
+        vx -= 0.55;
+        vy += 1.2;
+      }
+
+      if (repeatShotCount >= 2) {
+        vx -= Math.min(1.4, 0.35 * repeatShotCount);
+        vy += Math.min(2.5, 0.65 * repeatShotCount);
+      }
+
+      balls.push({
+        x: shotOriginX,
+        y: shotOriginY,
+        radius: 10,
+        vx,
+        vy,
+        gravity,
+        scored: false
+      });
+    }
+
+    function updatePlayer() {
+      if (keys["ArrowLeft"] && player.x > 0) {
+        player.x -= player.speed;
+      }
+
+      if (keys["ArrowRight"] && player.x + player.width < canvas.width) {
+        player.x += player.speed;
+      }
+
+      if (player.isJumping) {
+        player.y += player.jumpVelocity;
+        player.jumpVelocity += 0.6;
+
+        if (player.y >= 360) {
+          player.y = 360;
+          player.jumpVelocity = 0;
+          player.isJumping = false;
+        }
+      }
+
+      const defenderTop = defender.y - defender.jumpOffset;
+      const touchingDefender =
+        player.x + player.width > defender.x &&
+        player.x < defender.x + defender.width &&
+        player.y + player.height > defenderTop &&
+        player.y < defenderTop + defender.height;
+
+      if (touchingDefender) {
+        if (player.x < defender.x) {
+          player.x = defender.x - player.width;
+        } else {
+          player.x = defender.x + defender.width;
+        }
+      }
+    }
+
+    function updateDefender() {
+      const playerCenterX = player.x + player.width / 2;
+      const hoopFrontX = hoop.x + 12;
+      const playerNearHoop = player.x + player.width > hoop.x - 180;
+      const protectRimX = hoopFrontX - defender.width / 2;
+      const playerPressure = Math.min(1, Math.abs((playerCenterX - (defender.x + defender.width / 2)) / 110));
+      const patrolSpeed = playerNearHoop ? 0.16 : 0.09 + playerPressure * 0.08;
+      defender.patrolPhase += patrolSpeed;
+      const primarySlide = Math.sin(defender.patrolPhase) * defender.patrolAmplitude;
+      const secondarySlide = Math.sin(defender.patrolPhase * 2.2) * 12;
+      const laneShade = player.x > defender.x ? 20 : -12;
+      const patrolOffset = primarySlide + secondarySlide + laneShade;
+      const closeoutX = Math.min(
+        defender.maxX - defender.width,
+        Math.max(defender.minX, playerCenterX + 12 + patrolOffset)
+      );
+
+      defender.targetX = playerNearHoop
+        ? Math.min(
+            defender.maxX - defender.width,
+            Math.max(defender.minX, protectRimX + patrolOffset * 0.65)
+          )
+        : closeoutX;
+      defender.targetY = Math.max(
+        defender.minY,
+        Math.min(defender.maxY, player.y - (playerNearHoop ? 4 : 18))
+      );
+
+      if (defender.recoveryTimer > 0) {
+        defender.recoveryTimer--;
+      } else {
+        const dx = defender.targetX - defender.x;
+        if (Math.abs(dx) > 1.25) {
+          const slideSpeed = defender.speed + Math.min(1.5, Math.abs(dx) * 0.05) + playerPressure * 0.55;
+          defender.x += Math.sign(dx) * Math.min(slideSpeed, Math.abs(dx));
+        }
+      }
+
+      const dy = defender.targetY - defender.y;
+      if (Math.abs(dy) > 1) {
+        defender.y += Math.sign(dy) * Math.min(defender.ySpeed, Math.abs(dy));
+      }
+
+      const shouldContestJump =
+        defender.contestTimer > 0 ||
+        (Math.abs(playerCenterX - (defender.x + defender.width / 2)) < 75 && player.isJumping);
+
+      if (shouldContestJump) {
+        defender.contestTimer = Math.max(0, defender.contestTimer - 1);
+        defender.jumpOffset = Math.min(42, defender.jumpOffset + 4.5);
+        defender.recoveryTimer = 4;
+      } else if (defender.jumpOffset > 0) {
+        defender.jumpOffset = Math.max(0, defender.jumpOffset - 3.2);
+      }
+    }
+
+    function updateBalls() {
+      for (let i = balls.length - 1; i >= 0; i--) {
+        const ball = balls[i];
+
+        ball.x += ball.vx;
+        ball.y += ball.vy;
+        ball.vy += ball.gravity;
+
+        if (
+          !ball.scored &&
+          ball.x > hoop.x + 10 &&
+          ball.x < hoop.x + hoop.width - 10 &&
+          ball.y > hoop.y &&
+          ball.y < hoop.y + 30 &&
+          ball.vy > 0
+        ) {
+          score++;
+          updateHighScore();
+          ball.scored = true;
+        }
+
+        const defenderTop = defender.y - defender.jumpOffset;
+        const blockedByDefender =
+          ball.x + ball.radius > defender.x &&
+          ball.x - ball.radius < defender.x + defender.width &&
+          ball.y + ball.radius > defenderTop &&
+          ball.y - ball.radius < defenderTop + defender.height;
+
+        if (blockedByDefender) {
+          ball.vx = -Math.abs(ball.vx) * 0.65;
+          ball.vy = -7;
+          ball.x = defender.x - ball.radius;
+        }
+
+        if (ball.y > canvas.height || ball.x < -50 || ball.x > canvas.width + 50) {
+          balls.splice(i, 1);
+        }
+      }
+    }
+
+    function dunk() {
+      const nearHoop =
+        player.x + player.width > hoop.x - 40 &&
+        player.x < hoop.x + hoop.width;
+
+      const highEnough = player.y < 260;
+      const defenderTop = defender.y - defender.jumpOffset;
+      const defenderContesting =
+        player.x + player.width > defender.x - 10 &&
+        player.x < defender.x + defender.width + 10 &&
+        player.y + player.height > defenderTop;
+
+      if (nearHoop && highEnough && !defenderContesting) {
+        score += 2;
+        updateHighScore();
+
+        balls.push({
+          x: hoop.x + 40,
+          y: hoop.y + 5,
+          radius: 10,
+          vx: 0,
+          vy: 3,
+          gravity: 0.25,
+          scored: true
+        });
+      }
+    }
+
+    function drawCourt() {
+      const skyGradient = ctx.createLinearGradient(0, 0, 0, 320);
+      skyGradient.addColorStop(0, "#6bb7ff");
+      skyGradient.addColorStop(0.55, "#a5d8ff");
+      skyGradient.addColorStop(1, "#e8f5ff");
+      ctx.fillStyle = skyGradient;
+      ctx.fillRect(0, 0, canvas.width, 320);
+
+      const lightGlow = ctx.createRadialGradient(110, 90, 20, 110, 90, 150);
+      lightGlow.addColorStop(0, "rgba(255, 242, 194, 0.85)");
+      lightGlow.addColorStop(1, "rgba(255, 242, 194, 0)");
+      ctx.fillStyle = lightGlow;
+      ctx.fillRect(0, 0, 300, 220);
+
+      ctx.fillStyle = "#9bc77a";
+      ctx.fillRect(0, 320, canvas.width, 130);
+
+      const woodGradient = ctx.createLinearGradient(0, 450, 0, 500);
+      woodGradient.addColorStop(0, "#ddb072");
+      woodGradient.addColorStop(1, "#a96d39");
+      ctx.fillStyle = woodGradient;
+      ctx.fillRect(0, 410, canvas.width, 90);
+
+      ctx.strokeStyle = "rgba(116, 64, 22, 0.35)";
+      ctx.lineWidth = 2;
+      for (let x = 0; x <= canvas.width; x += 40) {
+        ctx.beginPath();
+        ctx.moveTo(x, 410);
+        ctx.lineTo(x, 500);
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(hoop.x - 10, 410, 95, Math.PI, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.rect(hoop.x - 80, 320, 120, 180);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(120, 470, 48, Math.PI, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    function drawScore() {
+      ctx.fillStyle = "white";
+      ctx.font = "24px Arial";
+      ctx.fillText("Score: " + score, 20, 30);
+      ctx.fillText("Time: " + Math.ceil(timeLeft), 20, 82);
+      ctx.fillText("High Score: " + highScore, 20, 134);
+
+      ctx.font = "16px Arial";
+      ctx.fillText("Left/Right move | Up jump | SPACE shoot | D dunk", 20, 55);
+      ctx.fillText("Defender closes out if you camp in one spot.", 20, 105);
+    }
+
+    function drawGameOver() {
+      ctx.fillStyle = "rgba(0, 0, 0, 0.65)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "white";
+      ctx.font = "42px Arial";
+      ctx.fillText("Time's Up!", 285, 220);
+
+      ctx.font = "28px Arial";
+      ctx.fillText("Final Score: " + score, 305, 270);
+      ctx.fillText("Best Score: " + highScore, 305, 305);
+
+      ctx.font = "18px Arial";
+      ctx.fillText("Refresh the page to play again.", 280, 340);
+    }
+
+    function gameLoop(timestamp = 0) {
+      if (!lastTimestamp) {
+        lastTimestamp = timestamp;
+      }
+
+      const deltaTime = (timestamp - lastTimestamp) / 1000;
+      lastTimestamp = timestamp;
+
+      if (!gameOver) {
+        timeLeft = Math.max(0, timeLeft - deltaTime);
+        if (timeLeft === 0) {
+          updateHighScore();
+          gameOver = true;
+        }
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (!gameOver) {
+        updatePlayer();
+        updateDefender();
+        updateBalls();
+      }
+
+      drawCourt();
+      drawHoop();
+      drawDefender();
+      drawPlayer();
+      drawScore();
+      balls.forEach(drawBall);
+
+      if (gameOver) {
+        drawGameOver();
+      }
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+  </script>
+</body>
+</html>
